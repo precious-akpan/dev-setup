@@ -5,9 +5,8 @@ set -e
 trap 'echo "Error occurred at line $LINENO. Exit code: $?" >&2' ERR
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+RED='\\033[0;31m'
+YELLOW='\\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
@@ -24,10 +23,50 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
+# Check if systemd is available
+has_systemd() {
+    if command -v systemctl >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Service management for different init systems
+manage_service() {
+    local service_name=$1
+    local action=$2
+    
+    if has_systemd; then
+        systemctl "$action" "$service_name"
+    else
+        case $(echo "$OS" | tr '[:upper:]' '[:lower:]') in
+            *freebsd*|*openbsd*|*netbsd*)
+                service "$service_name" "$action"
+                ;;
+            *macos*)
+                brew services "$action" "$service_name"
+                ;;
+            *)
+                if [ -f "/etc/init.d/$service_name" ]; then
+                    "/etc/init.d/$service_name" "$action"
+                else
+                    log_error "No service management system found for $service_name"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
+}
+
+# Check if script is run with sudo/root privileges
+
 # Check if script is run with sudo/root privileges
 if [ "$(id -u)" -ne 0 ]; then 
     log_error "Please run as root or with sudo privileges"
+    exit 1  # Stop execution
 fi
+
 
 # Enhanced OS detection
 detect_os() {
@@ -38,18 +77,14 @@ detect_os() {
         if [[ "$OS" == "Pop!_OS" ]]; then
             OS="Pop_OS"
         fi
-        VER=$VERSION_ID
-    elif [ -f /usr/local/etc/os-release ]; then
-        # BSD systems
-        . /usr/local/etc/os-release
-        OS=$NAME
-        VER=$VERSION_ID
-    elif command -v uname > /dev/null; then
-        OS=$(uname -s)
-        VER=$(uname -r)
-        if [ "$OS" = "Darwin" ]; then
-            OS="macOS"
-            VER=$(sw_vers -productVersion)
+        elif [ -f /usr/local/etc/os-release ]; then
+            # BSD systems
+            . /usr/local/etc/os-release
+            OS=$NAME
+        elif command -v uname > /dev/null; then
+            OS=$(uname -s)
+            if [ "$OS" = "Darwin" ]; then
+                OS="macOS"
         elif [ "$OS" = "FreeBSD" ] || [ "$OS" = "OpenBSD" ] || [ "$OS" = "NetBSD" ]; then
             # Keep BSD name as is
             :
@@ -63,6 +98,7 @@ detect_os() {
 # Set package manager and commands based on OS
 # Detect package manager and set commands
 setup_package_manager() {
+export PKG_UPDATE PKG_INSTALL
     case $(echo "$OS" | tr '[:upper:]' '[:lower:]') in
         *ubuntu*|*debian*|*mint*|*pop*|*kali*)
             PKG_MANAGER="apt-get"
@@ -105,15 +141,10 @@ setup_package_manager() {
             ;;
         *)
             log_error "Unsupported operating system: $OS"
-            exit 1
+             exit 1  # Ensure script exits on unsupported OS
             ;;
     esac
 }
-        ;;
-    *)
-        log_error "Unsupported operating system: $OS"
-        ;;
-esac
 
 # Function to install packages
 install_package() {
@@ -123,8 +154,7 @@ install_package() {
 
 # Update system packages
 log_info "Updating system packages..."
-$PKG_UPDATE || log_warn "Failed to update package list"
-$PKG_UPGRADE || log_warn "Failed to upgrade packages"
+eval "$PKG_UPDATE" || log_warn "Failed to update package list"
 
 # Install development essentials based on OS
 log_info "Installing development essentials..."
@@ -264,8 +294,6 @@ install_docker() {
                 ;;
         esac
     fi
-fi
-
 # Node.js installation
 log_info "Setting up Node.js..."
 
@@ -273,7 +301,7 @@ log_info "Setting up Node.js..."
 if command -v node >/dev/null 2>&1; then
     current_version=$(node -v)
     log_info "Node.js ${current_version} is already installed"
-    read -p "Do you want to reinstall/switch installation method? [y/N]: " should_reinstall
+    read -r -p "Do you want to reinstall/switch installation method? [y/N]: " should_reinstall
     if [[ ! $should_reinstall =~ ^[Yy]$ ]]; then
         log_info "Skipping Node.js installation"
         # Install global packages if node exists
@@ -288,11 +316,11 @@ if command -v node >/dev/null 2>&1; then
         for package in "${npm_packages[@]}"; do
             npm install -g "$package"
         done
-        goto git_config
+        return
     fi
 fi
 
-read -p "Do you want to install Node.js using nvm (1) or system package manager (2)? [1/2]: " node_install_choice
+read -r -p "Do you want to install Node.js using nvm (1) or system package manager (2)? [1/2]: " node_install_choice
 
 case $node_install_choice in
     2)
@@ -339,11 +367,11 @@ for package in "${npm_packages[@]}"; do
     npm install -g "$package"
 done
 
-git_config:
+# Git configuration
 # Setup Git configuration
 log_info "Setting up Git configuration..."
-read -p "Enter your Git username: " git_username
-read -p "Enter your Git email: " git_email
+read -r -p "Enter your Git username: " git_username
+read -r -p "Enter your Git email: " git_email
 git config --global user.name "$git_username"
 git config --global user.email "$git_email"
 git config --global init.defaultBranch main
@@ -372,7 +400,7 @@ if [ ! -d "$HOME/.oh-my-zsh" ]; then
     
     # Fix permissions
     if [ -n "$SUDO_USER" ]; then
-        chown -R $SUDO_USER:$SUDO_USER "$HOME/.oh-my-zsh"
+        chown -R "$SUDO_USER":"$SUDO_USER" "$HOME/.oh-my-zsh"
     fi
 fi
 
