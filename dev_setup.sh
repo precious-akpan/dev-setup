@@ -27,7 +27,9 @@ log_error() {
 # Check if script is run with sudo/root privileges
 if [ "$(id -u)" -ne 0 ]; then 
     log_error "Please run as root or with sudo privileges"
+    exit 1  # Stop execution
 fi
+
 
 # Enhanced OS detection
 detect_os() {
@@ -63,6 +65,7 @@ detect_os() {
 # Set package manager and commands based on OS
 # Detect package manager and set commands
 setup_package_manager() {
+export pkG_UPDATE PKG_INSTALL
     case $(echo "$OS" | tr '[:upper:]' '[:lower:]') in
         *ubuntu*|*debian*|*mint*|*pop*|*kali*)
             PKG_MANAGER="apt-get"
@@ -105,11 +108,10 @@ setup_package_manager() {
             ;;
         *)
             log_error "Unsupported operating system: $OS"
-            exit 1
+             exit 1  # Ensure script exits on unsupported OS
             ;;
     esac
 }
-        ;;
     *)
         log_error "Unsupported operating system: $OS"
         ;;
@@ -124,7 +126,6 @@ install_package() {
 # Update system packages
 log_info "Updating system packages..."
 $PKG_UPDATE || log_warn "Failed to update package list"
-$PKG_UPGRADE || log_warn "Failed to upgrade packages"
 
 # Install development essentials based on OS
 log_info "Installing development essentials..."
